@@ -42,9 +42,11 @@
     button:disabled { opacity: 0.9; cursor: not-allowed; }
     /* スマホでも押下直後が分かるよう、処理中は色を変える */
     #startBtn.running {
-      background: #1f6feb;
-      border-color: #58a6ff;
-      color: #fff;
+      background: #2ea043 !important;
+      border-color: #56d364 !important;
+      color: #ffffff !important;
+      box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.35);
+      transform: scale(1.03);
     }
     #status { min-height: 1.2em; font-size: 14px; opacity: 0.9; }
     canvas {
@@ -233,9 +235,13 @@
       }
 
       busy = true;
-      startBtn.disabled = true;
       startBtn.classList.add('running');
       startBtn.textContent = '生成中...';
+      statusEl.textContent = '開始しました。準備中...';
+
+      // 視覚フィードバックを先に描画してから重い処理へ進む
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      startBtn.disabled = true;
 
       try {
         const videoBlob = await generateVideo(durationSec, outFormat);
