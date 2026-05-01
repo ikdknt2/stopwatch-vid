@@ -52,6 +52,7 @@
   </style>
   <!-- ffmpeg.wasm (UMD) -->
   <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/umd/index.js"></script>
 </head>
 <body>
   <div class="wrap">
@@ -86,6 +87,7 @@
 
     // UMD版の FFmpeg クラス取得
     const { FFmpeg } = FFmpegWASM;
+    const { toBlobURL } = FFmpegUtil;
     const ffmpeg = new FFmpeg();
     let ffmpegLoaded = false;
 
@@ -120,10 +122,13 @@
     async function ensureFFmpegLoaded() {
       if (ffmpegLoaded) return;
       statusEl.textContent = 'ffmpeg.wasm をロード中...';
-      await ffmpeg.load({
-        coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-        wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
-      });
+      const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+      // GitHub Pages などの別オリジンでも Worker を確実に起動できるよう、
+      // コア資産を Blob URL 化して同一オリジンとして読み込む。
+      const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
+      const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+
+      await ffmpeg.load({ coreURL, wasmURL });
       ffmpegLoaded = true;
     }
 
