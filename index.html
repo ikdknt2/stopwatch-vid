@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ストップウォッチ動画生成</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #000;
+      color: #fff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    .wrap {
+      width: min(90vw, 900px);
+      display: grid;
+      gap: 16px;
+      justify-items: center;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    label {
+      font-size: 16px;
+      opacity: 0.9;
+    }
+
+    input[type="number"] {
+      width: 120px;
+      font-size: 18px;
+      padding: 8px 10px;
+      border: 1px solid #666;
+      border-radius: 8px;
+      background: #111;
+      color: #fff;
+      font-family: inherit;
+    }
+
+    button {
+      font-size: 18px;
+      padding: 8px 14px;
+      border: 1px solid #888;
+      border-radius: 8px;
+      background: #1d1d1d;
+      color: #fff;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #status {
+      font-size: 14px;
+      opacity: 0.85;
+      min-height: 1.2em;
+    }
+
+    canvas {
+      width: 100%;
+      max-width: 900px;
+      aspect-ratio: 16 / 9;
+      border: 1px solid #222;
+      background: #000;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="controls">
+      <label for="secondsInput">秒数:</label>
+      <input id="secondsInput" type="number" min="0.01" step="0.01" value="12.34" />
+      <button id="startBtn">スタート</button>
+    </div>
+    <div id="status"></div>
+    <canvas id="timerCanvas" width="1280" height="720" aria-label="ストップウォッチ描画キャンバス"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('timerCanvas');
+    const ctx = canvas.getContext('2d');
+    const secondsInput = document.getElementById('secondsInput');
+    const startBtn = document.getElementById('startBtn');
+    const statusEl = document.getElementById('status');
+
+    // 分:秒.小数2桁（= 0.01秒単位）へ整形
+    function formatTime(seconds) {
+      const clamped = Math.max(0, seconds);
+      const centiseconds = Math.floor(clamped * 100 + 1e-6);
+      const minutes = Math.floor(centiseconds / 6000);
+      const secPart = Math.floor((centiseconds % 6000) / 100);
+      const csPart = centiseconds % 100;
+      return `${minutes}:${String(secPart).padStart(2, '0')}.${String(csPart).padStart(2, '0')}`;
+    }
+
+    // キャンバス中央に大きく描画
+    function drawTime(seconds) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const text = formatTime(seconds);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 180px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    }
+
+    // 初期表示（0分のときは必ず 0: から始まる）
+    drawTime(0);
+
+    let busy = false;
+
+    startBtn.addEventListener('click', async () => {
+      if (busy) return;
+
+      const targetSeconds = Number.parseFloat(secondsInput.value);
+      if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+        alert('0より大きい秒数を入力してください（例: 12.34）');
+        return;
+      }
+
+      busy = true;
+      startBtn.disabled = true;
+      statusEl.textContent = '録画準備中...';
+
+      const stream = canvas.captureStream(60);
+      let recorder;
+      const chunks = [];
+
+      try {
+        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+      } catch {
+        recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+      }
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      recorder.onerror = (event) => {
+        console.error('MediaRecorder error:', event.error);
+        statusEl.textContent = '録画エラーが発生しました。';
+      };
+
+      const stopped = new Promise((resolve) => {
+        recorder.onstop = resolve;
+      });
+
+      const filename = `stopwatch_${targetSeconds.toFixed(2)}s.webm`;
+
+      statusEl.textContent = `録画中... (${targetSeconds.toFixed(2)}秒)`;
+
+      // 録画開始と同時にタイマー開始
+      recorder.start();
+      const startTime = performance.now();
+
+      await new Promise((resolve) => {
+        function tick(now) {
+          const elapsed = (now - startTime) / 1000;
+
+          if (elapsed >= targetSeconds) {
+            // 最後のフレームは必ず指定時間で固定表示
+            drawTime(targetSeconds);
+            recorder.stop();
+            resolve();
+            return;
+          }
+
+          // 現在時刻を描画（0.01秒単位で見た目が更新される形式）
+          drawTime(elapsed);
+          requestAnimationFrame(tick);
+        }
+
+        requestAnimationFrame(tick);
+      });
+
+      await stopped;
+
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      statusEl.textContent = `保存完了: ${filename}`;
+      startBtn.disabled = false;
+      busy = false;
+    });
+  </script>
+</body>
+</html>
