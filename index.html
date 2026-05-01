@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ストップウォッチ動画生成（高速フレーム生成）</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #000;
+      color: #fff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    .wrap {
+      width: min(92vw, 960px);
+      display: grid;
+      gap: 14px;
+      justify-items: center;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    input[type="number"], select, button {
+      font-family: inherit;
+      font-size: 16px;
+      border-radius: 8px;
+      border: 1px solid #666;
+      background: #111;
+      color: #fff;
+      padding: 8px 10px;
+    }
+    input[type="number"] { width: 130px; }
+    button { cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    #status { min-height: 1.2em; font-size: 14px; opacity: 0.9; }
+    canvas {
+      width: 100%;
+      max-width: 960px;
+      aspect-ratio: 16 / 9;
+      display: block;
+      border: 1px solid #222;
+      background: #000;
+    }
+  </style>
+  <!-- ffmpeg.wasm (UMD) -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="controls">
+      <label for="secondsInput">秒数:</label>
+      <input id="secondsInput" type="number" min="0.01" step="0.01" value="12.34" />
+      <label for="formatSelect">形式:</label>
+      <select id="formatSelect">
+        <option value="webm">WebM</option>
+        <option value="mp4">MP4</option>
+      </select>
+      <button id="startBtn">スタート</button>
+    </div>
+    <div id="status">待機中</div>
+    <canvas id="timerCanvas" width="1280" height="720" aria-label="タイマー描画"></canvas>
+  </div>
+
+  <script>
+    const FPS = 60;
+    const canvas = document.getElementById('timerCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const secondsInput = document.getElementById('secondsInput');
+    const formatSelect = document.getElementById('formatSelect');
+    const startBtn = document.getElementById('startBtn');
+    const statusEl = document.getElementById('status');
+
+    // UMD版の FFmpeg クラス取得
+    const { FFmpeg } = FFmpegWASM;
+    const ffmpeg = new FFmpeg();
+    let ffmpegLoaded = false;
+
+    // 秒 -> m:ss.cc へ整形（cc=centiseconds=0.01秒）
+    function formatTime(seconds) {
+      const safe = Math.max(0, seconds);
+      const centiseconds = Math.floor(safe * 100 + 1e-6);
+      const min = Math.floor(centiseconds / 6000);
+      const sec = Math.floor((centiseconds % 6000) / 100);
+      const cs = centiseconds % 100;
+      return `${min}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+    }
+
+    // 背景黒 + 白文字のシンプル描画
+    function drawTime(seconds) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 180px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+      ctx.fillText(formatTime(seconds), canvas.width / 2, canvas.height / 2);
+    }
+
+    // 初期表示
+    drawTime(0);
+
+    async function ensureFFmpegLoaded() {
+      if (ffmpegLoaded) return;
+      statusEl.textContent = 'ffmpeg.wasm をロード中...';
+      await ffmpeg.load({
+        coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+        wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+      });
+      ffmpegLoaded = true;
+    }
+
+    // canvas をPNGバイトへ変換
+    async function canvasToPNGBytes() {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('PNG変換に失敗しました');
+      const arrayBuffer = await blob.arrayBuffer();
+      return new Uint8Array(arrayBuffer);
+    }
+
+    async function generateVideo(durationSec, outFormat) {
+      await ensureFFmpegLoaded();
+
+      // 指定秒数を必ず最終表示するため、最後の1フレームを「指定時刻」専用にする
+      const dynamicFrameCount = Math.max(0, Math.floor(durationSec * FPS));
+      const totalFrameCount = dynamicFrameCount + 1;
+
+      statusEl.textContent = `フレーム生成中... 0/${totalFrameCount}`;
+
+      // requestAnimationFrameは使わず、forループで全フレームを高速生成
+      for (let i = 0; i < dynamicFrameCount; i += 1) {
+        const t = i / FPS;
+        drawTime(t);
+
+        const pngBytes = await canvasToPNGBytes();
+        const fileName = `frame_${String(i).padStart(6, '0')}.png`;
+        await ffmpeg.writeFile(fileName, pngBytes);
+
+        // メモリ効率のため、ループごとに参照を捨てる
+        // (GC対象になりやすくするため明示的にスコープを短く維持)
+        if ((i + 1) % 30 === 0 || i + 1 === dynamicFrameCount) {
+          statusEl.textContent = `フレーム生成中... ${i + 1}/${totalFrameCount}`;
+        }
+      }
+
+      // 最後のフレームは必ず指定時間を正確に表示
+      drawTime(durationSec);
+      const lastIndex = dynamicFrameCount;
+      await ffmpeg.writeFile(`frame_${String(lastIndex).padStart(6, '0')}.png`, await canvasToPNGBytes());
+      statusEl.textContent = `フレーム生成中... ${totalFrameCount}/${totalFrameCount}`;
+
+      const outputName = outFormat === 'mp4' ? 'output.mp4' : 'output.webm';
+
+      statusEl.textContent = '動画エンコード中...';
+      if (outFormat === 'mp4') {
+        await ffmpeg.exec([
+          '-framerate', String(FPS),
+          '-i', 'frame_%06d.png',
+          '-pix_fmt', 'yuv420p',
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-crf', '18',
+          outputName
+        ]);
+      } else {
+        await ffmpeg.exec([
+          '-framerate', String(FPS),
+          '-i', 'frame_%06d.png',
+          '-c:v', 'libvpx-vp9',
+          '-b:v', '0',
+          '-crf', '30',
+          '-pix_fmt', 'yuv420p',
+          outputName
+        ]);
+      }
+
+      // 不要な中間フレームを削除してメモリ節約
+      for (let i = 0; i < totalFrameCount; i += 1) {
+        await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.png`);
+      }
+
+      const videoBytes = await ffmpeg.readFile(outputName);
+      await ffmpeg.deleteFile(outputName);
+
+      const mime = outFormat === 'mp4' ? 'video/mp4' : 'video/webm';
+      return new Blob([videoBytes.buffer], { type: mime });
+    }
+
+    let busy = false;
+    startBtn.addEventListener('click', async () => {
+      if (busy) return;
+
+      const durationSec = Number.parseFloat(secondsInput.value);
+      const outFormat = formatSelect.value;
+
+      if (!Number.isFinite(durationSec) || durationSec <= 0) {
+        alert('0より大きい秒数を入力してください（例: 12.34）');
+        return;
+      }
+
+      busy = true;
+      startBtn.disabled = true;
+
+      try {
+        const videoBlob = await generateVideo(durationSec, outFormat);
+        const fileName = `stopwatch_${durationSec.toFixed(2)}s.${outFormat}`;
+
+        const url = URL.createObjectURL(videoBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        statusEl.textContent = `完了: ${fileName} をダウンロードしました`;
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = `エラー: ${error.message || error}`;
+      } finally {
+        busy = false;
+        startBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
