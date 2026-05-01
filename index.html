@@ -73,6 +73,12 @@
     const FPS = 60;
     const canvas = document.getElementById('timerCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
+
+    // 生成は表示用canvasと分離したオフスクリーンcanvasで実施（再生不要）
+    const workCanvas = document.createElement('canvas');
+    workCanvas.width = canvas.width;
+    workCanvas.height = canvas.height;
+    const workCtx = workCanvas.getContext('2d', { alpha: false });
     const secondsInput = document.getElementById('secondsInput');
     const formatSelect = document.getElementById('formatSelect');
     const startBtn = document.getElementById('startBtn');
@@ -94,14 +100,18 @@
     }
 
     // 背景黒 + 白文字のシンプル描画
+    function drawTimeOn(targetCtx, seconds, w, h) {
+      targetCtx.fillStyle = '#000';
+      targetCtx.fillRect(0, 0, w, h);
+      targetCtx.fillStyle = '#fff';
+      targetCtx.textAlign = 'center';
+      targetCtx.textBaseline = 'middle';
+      targetCtx.font = 'bold 180px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+      targetCtx.fillText(formatTime(seconds), w / 2, h / 2);
+    }
+
     function drawTime(seconds) {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = 'bold 180px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
-      ctx.fillText(formatTime(seconds), canvas.width / 2, canvas.height / 2);
+      drawTimeOn(ctx, seconds, canvas.width, canvas.height);
     }
 
     // 初期表示
@@ -119,7 +129,7 @@
 
     // canvas をPNGバイトへ変換
     async function canvasToPNGBytes() {
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const blob = await new Promise((resolve) => workCanvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('PNG変換に失敗しました');
       const arrayBuffer = await blob.arrayBuffer();
       return new Uint8Array(arrayBuffer);
@@ -130,6 +140,7 @@
 
       // 指定秒数を必ず最終表示するため、最後の1フレームを「指定時刻」専用にする
       const dynamicFrameCount = Math.max(0, Math.floor(durationSec * FPS));
+      const startedAt = performance.now();
       const totalFrameCount = dynamicFrameCount + 1;
 
       statusEl.textContent = `フレーム生成中... 0/${totalFrameCount}`;
@@ -137,7 +148,8 @@
       // requestAnimationFrameは使わず、forループで全フレームを高速生成
       for (let i = 0; i < dynamicFrameCount; i += 1) {
         const t = i / FPS;
-        drawTime(t);
+        // 表示更新は不要。オフスクリーンにだけ描画して高速生成する。
+        drawTimeOn(workCtx, t, workCanvas.width, workCanvas.height);
 
         const pngBytes = await canvasToPNGBytes();
         const fileName = `frame_${String(i).padStart(6, '0')}.png`;
@@ -146,11 +158,15 @@
         // メモリ効率のため、ループごとに参照を捨てる
         // (GC対象になりやすくするため明示的にスコープを短く維持)
         if ((i + 1) % 30 === 0 || i + 1 === dynamicFrameCount) {
-          statusEl.textContent = `フレーム生成中... ${i + 1}/${totalFrameCount}`;
+          const elapsedMs = performance.now() - startedAt;
+          const fpsNow = ((i + 1) / (elapsedMs / 1000 || 1)).toFixed(1);
+          statusEl.textContent = `フレーム生成中... ${i + 1}/${totalFrameCount} (${fpsNow}fps相当)`;
         }
       }
 
       // 最後のフレームは必ず指定時間を正確に表示
+      drawTimeOn(workCtx, durationSec, workCanvas.width, workCanvas.height);
+      // 画面表示は最後だけ更新（生成中の再生をしない）
       drawTime(durationSec);
       const lastIndex = dynamicFrameCount;
       await ffmpeg.writeFile(`frame_${String(lastIndex).padStart(6, '0')}.png`, await canvasToPNGBytes());
