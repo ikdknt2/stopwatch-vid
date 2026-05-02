@@ -27,6 +27,13 @@
         <option value="60">60</option>
         <option value="30">30</option>
       </select>
+      <label for="tickSelect">更新刻み:</label>
+      <select id="tickSelect">
+        <option value="0.01">0.01秒</option>
+        <option value="0.1">0.1秒</option>
+        <option value="1">1秒</option>
+        <option value="10">10秒</option>
+      </select>
       <button id="startBtn">スタート</button>
     </div>
     <div id="status">待機中</div>
@@ -41,6 +48,7 @@
     const secondsInput = document.getElementById('secondsInput');
     const startBtn = document.getElementById('startBtn');
     const fpsSelect = document.getElementById('fpsSelect');
+    const tickSelect = document.getElementById('tickSelect');
     const statusEl = document.getElementById('status');
 
     const workCanvas = document.createElement('canvas');
@@ -71,7 +79,12 @@
     }
     drawTime(0);
 
-    async function generateWebM(durationSec, fps) {
+    function quantizeTime(seconds, stepSec) {
+      if (!Number.isFinite(stepSec) || stepSec <= 0) return seconds;
+      return Math.floor(seconds / stepSec) * stepSec;
+    }
+
+    async function generateWebM(durationSec, fps, tickStepSec) {
       if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
         throw new Error('このブラウザはWebCodecs未対応です（最新Chrome推奨）');
       }
@@ -115,7 +128,8 @@
 
       for (let i = 0; i < dynamicFrameCount; i += 1) {
         const t = i / fps;
-        drawTimeOn(workCtx, t, workCanvas.width, workCanvas.height);
+        const shownTime = quantizeTime(t, tickStepSec);
+        drawTimeOn(workCtx, shownTime, workCanvas.width, workCanvas.height);
         const vf = new VideoFrame(workCanvas, { timestamp: i * frameDurationUs, duration: frameDurationUs });
         encoder.encode(vf);
         vf.close();
@@ -147,7 +161,8 @@
       if (busy) return;
       const durationSec = Number.parseFloat(secondsInput.value);
       const fps = Number.parseInt(fpsSelect.value, 10);
-      if (!Number.isFinite(durationSec) || durationSec <= 0 || ![30, 60].includes(fps)) {
+      const tickStepSec = Number.parseFloat(tickSelect.value);
+      if (!Number.isFinite(durationSec) || durationSec <= 0 || ![30, 60].includes(fps) || ![0.01, 0.1, 1, 10].includes(tickStepSec)) {
         alert('0より大きい秒数を入力してください');
         return;
       }
@@ -160,8 +175,8 @@
       startBtn.disabled = true;
 
       try {
-        const blob = await generateWebM(durationSec, fps);
-        const fileName = `stopwatch_${durationSec.toFixed(2)}s_${fps}fps.webm`;
+        const blob = await generateWebM(durationSec, fps, tickStepSec);
+        const fileName = `stopwatch_${durationSec.toFixed(2)}s_${fps}fps_step${tickStepSec}s.webm`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
