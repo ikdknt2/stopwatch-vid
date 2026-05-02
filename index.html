@@ -140,8 +140,8 @@
     async function ensureFFmpegLoaded() {
       if (ffmpegLoaded) return;
       statusEl.textContent = 'ffmpeg.wasm をロード中...';
-      const coreBaseURL = 'https://unpkg.com/@ffmpeg/core@0.11.0/dist';
-      // v0.11系は corePath 指定で読み込む（worker.js分離問題を回避）
+      const coreBaseURL = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist';
+      // SharedArrayBuffer不要の single-thread core を使う（GitHub Pages向け）
       const coreURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript');
       await ffmpeg.load({ corePath: coreURL });
       ffmpegLoaded = true;
