@@ -10,7 +10,7 @@
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #000; color: #fff; font-family: ui-monospace, monospace; }
     .wrap { width: min(92vw, 960px); display: grid; gap: 14px; justify-items: center; }
     .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
-    input, button { font-family: inherit; font-size: 16px; border-radius: 8px; border: 1px solid #666; background: #111; color: #fff; padding: 8px 10px; }
+    input, select, button { font-family: inherit; font-size: 16px; border-radius: 8px; border: 1px solid #666; background: #111; color: #fff; padding: 8px 10px; }
     input { width: 130px; }
     #startBtn:active { background: #3fb950; border-color: #56d364; }
     #startBtn.running { background: #2ea043; border-color: #56d364; box-shadow: 0 0 0 3px rgba(46, 160, 67, .35); }
@@ -22,6 +22,11 @@
     <div class="controls">
       <label for="secondsInput">秒数:</label>
       <input id="secondsInput" type="number" min="0.01" step="0.01" value="12.34" />
+      <label for="fpsSelect">FPS:</label>
+      <select id="fpsSelect">
+        <option value="60">60</option>
+        <option value="30">30</option>
+      </select>
       <button id="startBtn">スタート</button>
     </div>
     <div id="status">待機中</div>
@@ -31,11 +36,11 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/webm-muxer@5.1.4/+esm';
 
-    const FPS = 60;
     const canvas = document.getElementById('timerCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
     const secondsInput = document.getElementById('secondsInput');
     const startBtn = document.getElementById('startBtn');
+    const fpsSelect = document.getElementById('fpsSelect');
     const statusEl = document.getElementById('status');
 
     const workCanvas = document.createElement('canvas');
@@ -66,14 +71,14 @@
     }
     drawTime(0);
 
-    async function generateWebM(durationSec) {
+    async function generateWebM(durationSec, fps) {
       if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
         throw new Error('このブラウザはWebCodecs未対応です（最新Chrome推奨）');
       }
 
-      const dynamicFrameCount = Math.max(0, Math.floor(durationSec * FPS));
+      const dynamicFrameCount = Math.max(0, Math.floor(durationSec * fps));
       const totalFrames = dynamicFrameCount + 1;
-      const frameDurationUs = Math.round(1_000_000 / FPS);
+      const frameDurationUs = Math.round(1_000_000 / fps);
 
       const muxer = new Muxer({
         target: new ArrayBufferTarget(),
@@ -81,7 +86,7 @@
           codec: 'V_VP9',
           width: workCanvas.width,
           height: workCanvas.height,
-          frameRate: FPS
+          frameRate: fps
         }
       });
 
@@ -102,14 +107,14 @@
         width: workCanvas.width,
         height: workCanvas.height,
         bitrate: 8_000_000,
-        framerate: FPS
+        framerate: fps
       });
 
       statusEl.textContent = `フレーム生成中... 0/${totalFrames}`;
       const t0 = performance.now();
 
       for (let i = 0; i < dynamicFrameCount; i += 1) {
-        const t = i / FPS;
+        const t = i / fps;
         drawTimeOn(workCtx, t, workCanvas.width, workCanvas.height);
         const vf = new VideoFrame(workCanvas, { timestamp: i * frameDurationUs, duration: frameDurationUs });
         encoder.encode(vf);
@@ -141,7 +146,8 @@
     startBtn.addEventListener('click', async () => {
       if (busy) return;
       const durationSec = Number.parseFloat(secondsInput.value);
-      if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      const fps = Number.parseInt(fpsSelect.value, 10);
+      if (!Number.isFinite(durationSec) || durationSec <= 0 || ![30, 60].includes(fps)) {
         alert('0より大きい秒数を入力してください');
         return;
       }
@@ -154,8 +160,8 @@
       startBtn.disabled = true;
 
       try {
-        const blob = await generateWebM(durationSec);
-        const fileName = `stopwatch_${durationSec.toFixed(2)}s.webm`;
+        const blob = await generateWebM(durationSec, fps);
+        const fileName = `stopwatch_${durationSec.toFixed(2)}s_${fps}fps.webm`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
