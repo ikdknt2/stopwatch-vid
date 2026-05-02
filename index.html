@@ -63,6 +63,8 @@
       background: #000;
     }
   </style>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js"></script>
 
 </head>
 <body>
@@ -81,10 +83,7 @@
     <canvas id="timerCanvas" width="1280" height="720" aria-label="タイマー描画"></canvas>
   </div>
 
-  <script type="module">
-    import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
-    import { toBlobURL } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js';
-
+  <script>
     const FPS = 60;
     const canvas = document.getElementById('timerCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -99,7 +98,9 @@
     const startBtn = document.getElementById('startBtn');
     const statusEl = document.getElementById('status');
 
-    const ffmpeg = new FFmpeg();
+    const { createFFmpeg } = FFmpeg;
+    const { toBlobURL } = FFmpegUtil;
+    const ffmpeg = createFFmpeg({ log: false });
     let ffmpegLoaded = false;
 
     // 秒 -> m:ss.cc へ整形（cc=centiseconds=0.01秒）
@@ -133,13 +134,10 @@
     async function ensureFFmpegLoaded() {
       if (ffmpegLoaded) return;
       statusEl.textContent = 'ffmpeg.wasm をロード中...';
-      const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
-      const ffmpegBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm';
-      // core / wasm / worker を Blob URL 化して同一オリジンとしてロード（GitHub Pages対策）
+      const coreBaseURL = 'https://unpkg.com/@ffmpeg/core@0.11.0/dist';
+      // v0.11系は corePath 指定で読み込む（worker.js分離問題を回避）
       const coreURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript');
-      const wasmURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm');
-      const workerURL = await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript');
-      await ffmpeg.load({ coreURL, wasmURL, workerURL });
+      await ffmpeg.load({ corePath: coreURL });
       ffmpegLoaded = true;
     }
 
@@ -169,7 +167,7 @@
 
         const pngBytes = await canvasToPNGBytes();
         const fileName = `frame_${String(i).padStart(6, '0')}.png`;
-        await ffmpeg.writeFile(fileName, pngBytes);
+        ffmpeg.FS('writeFile', fileName, pngBytes);
 
         // メモリ効率のため、ループごとに参照を捨てる
         // (GC対象になりやすくするため明示的にスコープを短く維持)
@@ -185,14 +183,14 @@
       // 画面表示は最後だけ更新（生成中の再生をしない）
       drawTime(durationSec);
       const lastIndex = dynamicFrameCount;
-      await ffmpeg.writeFile(`frame_${String(lastIndex).padStart(6, '0')}.png`, await canvasToPNGBytes());
+      ffmpeg.FS('writeFile', `frame_${String(lastIndex).padStart(6, '0')}.png`, await canvasToPNGBytes());
       statusEl.textContent = `フレーム生成中... ${totalFrameCount}/${totalFrameCount}`;
 
       const outputName = outFormat === 'mp4' ? 'output.mp4' : 'output.webm';
 
       statusEl.textContent = '動画エンコード中...';
       if (outFormat === 'mp4') {
-        await ffmpeg.exec([
+        await ffmpeg.run(
           '-framerate', String(FPS),
           '-i', 'frame_%06d.png',
           '-pix_fmt', 'yuv420p',
@@ -200,9 +198,9 @@
           '-preset', 'veryfast',
           '-crf', '18',
           outputName
-        ]);
+        );
       } else {
-        await ffmpeg.exec([
+        await ffmpeg.run(
           '-framerate', String(FPS),
           '-i', 'frame_%06d.png',
           '-c:v', 'libvpx-vp9',
@@ -210,16 +208,16 @@
           '-crf', '30',
           '-pix_fmt', 'yuv420p',
           outputName
-        ]);
+        );
       }
 
       // 不要な中間フレームを削除してメモリ節約
       for (let i = 0; i < totalFrameCount; i += 1) {
-        await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.png`);
+        ffmpeg.FS('unlink', `frame_${String(i).padStart(6, '0')}.png`);
       }
 
-      const videoBytes = await ffmpeg.readFile(outputName);
-      await ffmpeg.deleteFile(outputName);
+      const videoBytes = ffmpeg.FS('readFile', outputName);
+      ffmpeg.FS('unlink', outputName);
 
       const mime = outFormat === 'mp4' ? 'video/mp4' : 'video/webm';
       return new Blob([videoBytes.buffer], { type: mime });
