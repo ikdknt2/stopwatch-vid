@@ -11,7 +11,8 @@
     .wrap { width: min(92vw, 960px); display: grid; gap: 14px; justify-items: center; }
     .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
     input, select, button { font-family: inherit; font-size: 16px; border-radius: 8px; border: 1px solid #666; background: #111; color: #fff; padding: 8px 10px; }
-    input { width: 130px; }
+    input[type="text"] { width: 190px; }
+    input[type="color"] { width: 54px; height: 40px; padding: 4px; }
     #startBtn:active { background: #3fb950; border-color: #56d364; }
     #startBtn.running { background: #2ea043; border-color: #56d364; box-shadow: 0 0 0 3px rgba(46, 160, 67, .35); }
     canvas { width: 100%; max-width: 960px; aspect-ratio: 16/9; border: 1px solid #222; background: #000; }
@@ -34,6 +35,10 @@
         <option value="1">1秒</option>
         <option value="10">10秒</option>
       </select>
+      <label for="bgColorInput">背景:</label>
+      <input id="bgColorInput" type="color" value="#000000" />
+      <label for="textColorInput">文字:</label>
+      <input id="textColorInput" type="color" value="#ffffff" />
       <button id="startBtn">スタート</button>
     </div>
     <div id="status">待機中</div>
@@ -49,6 +54,8 @@
     const startBtn = document.getElementById('startBtn');
     const fpsSelect = document.getElementById('fpsSelect');
     const tickSelect = document.getElementById('tickSelect');
+    const bgColorInput = document.getElementById('bgColorInput');
+    const textColorInput = document.getElementById('textColorInput');
     const statusEl = document.getElementById('status');
 
     const workCanvas = document.createElement('canvas');
@@ -64,20 +71,20 @@
       return `${m}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '0')}`;
     }
 
-    function drawTimeOn(targetCtx, seconds, w, h) {
-      targetCtx.fillStyle = '#000';
+    function drawTimeOn(targetCtx, seconds, w, h, bgColor, textColor) {
+      targetCtx.fillStyle = bgColor;
       targetCtx.fillRect(0, 0, w, h);
-      targetCtx.fillStyle = '#fff';
+      targetCtx.fillStyle = textColor;
       targetCtx.textAlign = 'center';
       targetCtx.textBaseline = 'middle';
       targetCtx.font = 'bold 180px ui-monospace, monospace';
       targetCtx.fillText(formatTime(seconds), w / 2, h / 2);
     }
 
-    function drawTime(seconds) {
-      drawTimeOn(ctx, seconds, canvas.width, canvas.height);
+    function drawTime(seconds, bgColor, textColor) {
+      drawTimeOn(ctx, seconds, canvas.width, canvas.height, bgColor, textColor);
     }
-    drawTime(0);
+    drawTime(0, bgColorInput.value, textColorInput.value);
 
 
     function parseDurationInput(raw) {
@@ -103,7 +110,7 @@
       return Math.floor(seconds / stepSec) * stepSec;
     }
 
-    async function generateWebM(durationSec, fps, tickStepSec) {
+    async function generateWebM(durationSec, fps, tickStepSec, bgColor, textColor) {
       if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
         throw new Error('このブラウザはWebCodecs未対応です（最新Chrome推奨）');
       }
@@ -148,7 +155,7 @@
       for (let i = 0; i < dynamicFrameCount; i += 1) {
         const t = i / fps;
         const shownTime = quantizeTime(t, tickStepSec);
-        drawTimeOn(workCtx, shownTime, workCanvas.width, workCanvas.height);
+        drawTimeOn(workCtx, shownTime, workCanvas.width, workCanvas.height, bgColor, textColor);
         const vf = new VideoFrame(workCanvas, { timestamp: i * frameDurationUs, duration: frameDurationUs });
         encoder.encode(vf);
         vf.close();
@@ -161,8 +168,8 @@
         }
       }
 
-      drawTimeOn(workCtx, durationSec, workCanvas.width, workCanvas.height);
-      drawTime(durationSec);
+      drawTimeOn(workCtx, durationSec, workCanvas.width, workCanvas.height, bgColor, textColor);
+      drawTime(durationSec, bgColor, textColor);
       const lastFrame = new VideoFrame(workCanvas, { timestamp: dynamicFrameCount * frameDurationUs, duration: frameDurationUs });
       encoder.encode(lastFrame);
       lastFrame.close();
@@ -175,12 +182,17 @@
       return new Blob([webmBuffer], { type: 'video/webm' });
     }
 
+    bgColorInput.addEventListener('input', () => { if (!busy) drawTime(0, bgColorInput.value, textColorInput.value); });
+    textColorInput.addEventListener('input', () => { if (!busy) drawTime(0, bgColorInput.value, textColorInput.value); });
+
     let busy = false;
     startBtn.addEventListener('click', async () => {
       if (busy) return;
       const durationSec = parseDurationInput(secondsInput.value);
       const fps = Number.parseInt(fpsSelect.value, 10);
       const tickStepSec = Number.parseFloat(tickSelect.value);
+      const bgColor = bgColorInput.value;
+      const textColor = textColorInput.value;
       if (!Number.isFinite(durationSec) || durationSec <= 0 || ![30, 60].includes(fps) || ![0.01, 0.1, 1, 10].includes(tickStepSec)) {
         alert('時間を入力してください（例: 70.24 または 1:10.24）');
         return;
@@ -194,7 +206,7 @@
       startBtn.disabled = true;
 
       try {
-        const blob = await generateWebM(durationSec, fps, tickStepSec);
+        const blob = await generateWebM(durationSec, fps, tickStepSec, bgColor, textColor);
         const fileName = `stopwatch_${durationSec.toFixed(2)}s_${fps}fps_step${tickStepSec}s.webm`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
