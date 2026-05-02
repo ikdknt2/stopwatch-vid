@@ -133,11 +133,13 @@
     async function ensureFFmpegLoaded() {
       if (ffmpegLoaded) return;
       statusEl.textContent = 'ffmpeg.wasm をロード中...';
-      const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
-      // core/wasm を Blob URL 化して同一オリジンとしてロード（GitHub Pages対策）
-      const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
-      const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
-      await ffmpeg.load({ coreURL, wasmURL });
+      const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+      const ffmpegBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm';
+      // core / wasm / worker を Blob URL 化して同一オリジンとしてロード（GitHub Pages対策）
+      const coreURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript');
+      const wasmURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm');
+      const workerURL = await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript');
+      await ffmpeg.load({ coreURL, wasmURL, workerURL });
       ffmpegLoaded = true;
     }
 
