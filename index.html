@@ -64,7 +64,6 @@
     }
   </style>
   <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
-  <script src="https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js"></script>
 
 </head>
 <body>
@@ -99,8 +98,15 @@
     const statusEl = document.getElementById('status');
 
     const { createFFmpeg } = FFmpeg;
-    const { toBlobURL } = FFmpegUtil;
     const ffmpeg = createFFmpeg({ log: false });
+
+    // @ffmpeg/util に依存せず Blob URL を作る（CDN形式差分の影響を避ける）
+    async function toBlobURL(url, mimeType) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`リソース取得失敗: ${url}`);
+      const buf = await res.arrayBuffer();
+      return URL.createObjectURL(new Blob([buf], { type: mimeType }));
+    }
     let ffmpegLoaded = false;
 
     // 秒 -> m:ss.cc へ整形（cc=centiseconds=0.01秒）
