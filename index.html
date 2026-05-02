@@ -105,6 +105,25 @@
       return Number.parseFloat(text);
     }
 
+
+    function syncFpsOptionsByTickStep() {
+      const tick = Number.parseFloat(tickSelect.value);
+      const allow60 = tick === 0.01;
+      const option60 = fpsSelect.querySelector('option[value="60"]');
+
+      if (allow60) {
+        if (!option60) {
+          const op = document.createElement('option');
+          op.value = '60';
+          op.textContent = '60';
+          fpsSelect.insertBefore(op, fpsSelect.firstChild);
+        }
+      } else {
+        if (option60) option60.remove();
+        fpsSelect.value = '30';
+      }
+    }
+
     function quantizeTime(seconds, stepSec) {
       if (!Number.isFinite(stepSec) || stepSec <= 0) return seconds;
       return Math.floor(seconds / stepSec) * stepSec;
@@ -184,6 +203,8 @@
 
     bgColorInput.addEventListener('input', () => { if (!busy) drawTime(0, bgColorInput.value, textColorInput.value); });
     textColorInput.addEventListener('input', () => { if (!busy) drawTime(0, bgColorInput.value, textColorInput.value); });
+    tickSelect.addEventListener('change', syncFpsOptionsByTickStep);
+    syncFpsOptionsByTickStep();
 
     let busy = false;
     startBtn.addEventListener('click', async () => {
@@ -193,7 +214,8 @@
       const tickStepSec = Number.parseFloat(tickSelect.value);
       const bgColor = bgColorInput.value;
       const textColor = textColorInput.value;
-      if (!Number.isFinite(durationSec) || durationSec <= 0 || ![30, 60].includes(fps) || ![0.01, 0.1, 1, 10].includes(tickStepSec)) {
+      const validFps = tickStepSec === 0.01 ? [30, 60] : [30];
+      if (!Number.isFinite(durationSec) || durationSec <= 0 || !validFps.includes(fps) || ![0.01, 0.1, 1, 10].includes(tickStepSec)) {
         alert('時間を入力してください（例: 70.24 または 1:10.24）');
         return;
       }
