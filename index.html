@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ストップウォッチ動画生成（高速フレーム生成）</title>
+  <link rel="icon" href="data:," />
   <style>
     :root { color-scheme: dark; }
     body {
@@ -62,9 +63,7 @@
       background: #000;
     }
   </style>
-  <!-- ffmpeg.wasm (UMD) -->
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/umd/index.js"></script>
+
 </head>
 <body>
   <div class="wrap">
@@ -82,7 +81,10 @@
     <canvas id="timerCanvas" width="1280" height="720" aria-label="タイマー描画"></canvas>
   </div>
 
-  <script>
+  <script type="module">
+    import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+    import { toBlobURL } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js';
+
     const FPS = 60;
     const canvas = document.getElementById('timerCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -97,12 +99,6 @@
     const startBtn = document.getElementById('startBtn');
     const statusEl = document.getElementById('status');
 
-    // UMD版の FFmpeg クラス取得
-    const { FFmpeg } = FFmpegWASM;
-    // CDNや環境差で util が読めない場合でもUI全体が止まらないようにする
-    const toBlobURLSafe = globalThis.FFmpegUtil && typeof globalThis.FFmpegUtil.toBlobURL === 'function'
-      ? globalThis.FFmpegUtil.toBlobURL
-      : null;
     const ffmpeg = new FFmpeg();
     let ffmpegLoaded = false;
 
@@ -137,20 +133,11 @@
     async function ensureFFmpegLoaded() {
       if (ffmpegLoaded) return;
       statusEl.textContent = 'ffmpeg.wasm をロード中...';
-      const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-      if (toBlobURLSafe) {
-        // GitHub Pages などの別オリジンでも Worker を確実に起動できるよう、
-        // コア資産を Blob URL 化して同一オリジンとして読み込む。
-        const coreURL = await toBlobURLSafe(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
-        const wasmURL = await toBlobURLSafe(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
-        await ffmpeg.load({ coreURL, wasmURL });
-      } else {
-        // util が読み込めない環境向けフォールバック
-        await ffmpeg.load({
-          coreURL: `${baseURL}/ffmpeg-core.js`,
-          wasmURL: `${baseURL}/ffmpeg-core.wasm`
-        });
-      }
+      const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+      // core/wasm を Blob URL 化して同一オリジンとしてロード（GitHub Pages対策）
+      const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
+      const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+      await ffmpeg.load({ coreURL, wasmURL });
       ffmpegLoaded = true;
     }
 
