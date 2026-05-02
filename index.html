@@ -21,7 +21,7 @@
   <div class="wrap">
     <div class="controls">
       <label for="secondsInput">秒数:</label>
-      <input id="secondsInput" type="number" min="0.01" step="0.01" value="12.34" />
+      <input id="secondsInput" type="text" value="12.34" placeholder="例: 70.24 / 1:10.24" />
       <label for="fpsSelect">FPS:</label>
       <select id="fpsSelect">
         <option value="60">60</option>
@@ -78,6 +78,25 @@
       drawTimeOn(ctx, seconds, canvas.width, canvas.height);
     }
     drawTime(0);
+
+
+    function parseDurationInput(raw) {
+      const text = String(raw || '').trim();
+      if (!text) return NaN;
+
+      // m:ss.cc 形式（例: 1:10.24）
+      if (text.includes(':')) {
+        const [mPart, sPart] = text.split(':');
+        if (sPart === undefined) return NaN;
+        const minutes = Number.parseInt(mPart, 10);
+        const seconds = Number.parseFloat(sPart);
+        if (!Number.isFinite(minutes) || minutes < 0 || !Number.isFinite(seconds) || seconds < 0 || seconds >= 60) return NaN;
+        return minutes * 60 + seconds;
+      }
+
+      // 秒のみ（例: 70.24）
+      return Number.parseFloat(text);
+    }
 
     function quantizeTime(seconds, stepSec) {
       if (!Number.isFinite(stepSec) || stepSec <= 0) return seconds;
@@ -159,11 +178,11 @@
     let busy = false;
     startBtn.addEventListener('click', async () => {
       if (busy) return;
-      const durationSec = Number.parseFloat(secondsInput.value);
+      const durationSec = parseDurationInput(secondsInput.value);
       const fps = Number.parseInt(fpsSelect.value, 10);
       const tickStepSec = Number.parseFloat(tickSelect.value);
       if (!Number.isFinite(durationSec) || durationSec <= 0 || ![30, 60].includes(fps) || ![0.01, 0.1, 1, 10].includes(tickStepSec)) {
-        alert('0より大きい秒数を入力してください');
+        alert('時間を入力してください（例: 70.24 または 1:10.24）');
         return;
       }
 
