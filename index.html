@@ -42,6 +42,16 @@
       <input id="bgColorInput" type="color" value="#000000" />
       <label for="textColorInput">文字:</label>
       <input id="textColorInput" type="color" value="#ffffff" />
+      <label for="formatSelect">形式:</label>
+      <select id="formatSelect">
+        <option value="mp4">MP4 (H.264)</option>
+        <option value="webm">WebM (VP9)</option>
+      </select>
+      <label for="engineSelect">生成方式:</label>
+      <select id="engineSelect">
+        <option value="webcodecs">WebCodecs</option>
+        <option value="mediarecorder">MediaRecorder</option>
+      </select>
       <button id="startBtn">スタート</button>
     </div>
     <div id="status">待機中</div>
@@ -53,7 +63,7 @@
         <li>秒数に時間を入力します（例: <code>12.34</code> / <code>1:10.24</code>）。</li>
         <li>更新刻みを選ぶと、表示の変化タイミングを調整できます。</li>
         <li>背景色・文字色を選んで見た目を調整します。</li>
-        <li>スタートを押すとWebM動画を生成し、自動でダウンロードします。</li>
+        <li>スタートを押すと選択した形式（MP4 / WebM）と生成方式（WebCodecs / MediaRecorder）で動画を生成し、自動でダウンロードします。</li>
         <li>長時間を生成すると、端末のスペックによってはフリーズのような動作が発生する危険性があります。</li>
         <li>はじめは少しずつ時間を増やしながら使用してください。</li>
       </ul>
@@ -61,7 +71,8 @@
   </div>
 
   <script type="module">
-    import { Muxer, ArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/webm-muxer@5.1.4/+esm';
+    import { Muxer as WebMMuxer, ArrayBufferTarget as WebMArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/webm-muxer@5.1.4/+esm';
+    import { Muxer as MP4Muxer, ArrayBufferTarget as MP4ArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm';
 
     const canvas = document.getElementById('timerCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -72,6 +83,8 @@
     const bgColorInput = document.getElementById('bgColorInput');
     const textColorInput = document.getElementById('textColorInput');
     const statusEl = document.getElementById('status');
+    const formatSelect = document.getElementById('formatSelect');
+    const engineSelect = document.getElementById('engineSelect');
 
     const workCanvas = document.createElement('canvas');
     workCanvas.width = canvas.width;
@@ -144,7 +157,46 @@
       return Math.floor(seconds / stepSec) * stepSec;
     }
 
-    async function generateWebM(durationSec, fps, tickStepSec, bgColor, textColor) {
+
+    function pickMediaRecorderMimeType(format) {
+      if (!('MediaRecorder' in window)) return null;
+      const candidates = format === 'mp4'
+        ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E', 'video/mp4']
+        : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || null;
+    }
+
+    async function generateVideoWithMediaRecorder(durationSec, fps, tickStepSec, bgColor, textColor, format) {
+      if (!('MediaRecorder' in window)) throw new Error('このブラウザはMediaRecorder未対応です');
+      const mimeType = pickMediaRecorderMimeType(format);
+      if (!mimeType) throw new Error(`MediaRecorderで${format.toUpperCase()}を生成できません`);
+
+      const stream = workCanvas.captureStream(fps);
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+      const chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+      const totalFrames = Math.max(0, Math.floor(durationSec * fps)) + 1;
+      statusEl.textContent = `録画準備中... 0/${totalFrames}`;
+      recorder.start();
+
+      for (let i = 0; i < totalFrames; i += 1) {
+        const t = i === totalFrames - 1 ? durationSec : quantizeTime(i / fps, tickStepSec);
+        drawTimeOn(workCtx, t, workCanvas.width, workCanvas.height, bgColor, textColor);
+        drawTime(t, bgColor, textColor);
+        statusEl.textContent = `録画中... ${i + 1}/${totalFrames}`;
+        await new Promise((r) => setTimeout(r, Math.max(0, Math.round(1000 / fps))));
+      }
+
+      const done = new Promise((resolve) => { recorder.onstop = resolve; });
+      recorder.stop();
+      await done;
+      stream.getTracks().forEach((track) => track.stop());
+
+      return new Blob(chunks, { type: mimeType.split(';')[0] || (format === 'mp4' ? 'video/mp4' : 'video/webm') });
+    }
+
+    async function generateVideo(durationSec, fps, tickStepSec, bgColor, textColor, format) {
       if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
         throw new Error('このブラウザはWebCodecs未対応です（最新Chrome推奨）');
       }
@@ -153,15 +205,27 @@
       const totalFrames = dynamicFrameCount + 1;
       const frameDurationUs = Math.round(1_000_000 / fps);
 
-      const muxer = new Muxer({
-        target: new ArrayBufferTarget(),
-        video: {
-          codec: 'V_VP9',
-          width: workCanvas.width,
-          height: workCanvas.height,
-          frameRate: fps
-        }
-      });
+      const isMp4 = format === 'mp4';
+      const muxer = isMp4
+        ? new MP4Muxer({
+            target: new MP4ArrayBufferTarget(),
+            video: {
+              codec: 'avc',
+              width: workCanvas.width,
+              height: workCanvas.height,
+              frameRate: fps
+            },
+            fastStart: 'in-memory'
+          })
+        : new WebMMuxer({
+            target: new WebMArrayBufferTarget(),
+            video: {
+              codec: 'V_VP9',
+              width: workCanvas.width,
+              height: workCanvas.height,
+              frameRate: fps
+            }
+          });
 
       let encodedCount = 0;
       const encoder = new VideoEncoder({
@@ -176,7 +240,7 @@
       });
 
       encoder.configure({
-        codec: 'vp09.00.10.08',
+        codec: isMp4 ? 'avc1.42001f' : 'vp09.00.10.08',
         width: workCanvas.width,
         height: workCanvas.height,
         bitrate: 8_000_000,
@@ -212,8 +276,8 @@
       encoder.close();
       muxer.finalize();
 
-      const webmBuffer = muxer.target.buffer;
-      return new Blob([webmBuffer], { type: 'video/webm' });
+      const videoBuffer = muxer.target.buffer;
+      return new Blob([videoBuffer], { type: isMp4 ? 'video/mp4' : 'video/webm' });
     }
 
     bgColorInput.addEventListener('input', () => { if (!busy) drawTime(0, bgColorInput.value, textColorInput.value); });
@@ -229,6 +293,8 @@
       const tickStepSec = Number.parseFloat(tickSelect.value);
       const bgColor = bgColorInput.value;
       const textColor = textColorInput.value;
+      const format = formatSelect.value;
+      const engine = engineSelect.value;
       const validFps = tickStepSec === 0.01 ? [30, 60] : [30];
       if (!Number.isFinite(durationSec) || durationSec <= 0 || !validFps.includes(fps) || ![0.01, 0.1, 1, 10].includes(tickStepSec)) {
         alert('時間を入力してください（例: 70.24 または 1:10.24）');
@@ -243,8 +309,11 @@
       startBtn.disabled = true;
 
       try {
-        const blob = await generateWebM(durationSec, fps, tickStepSec, bgColor, textColor);
-        const fileName = `stopwatch_${durationSec.toFixed(2)}s_${fps}fps_step${tickStepSec}s.webm`;
+        const blob = engine === 'mediarecorder'
+          ? await generateVideoWithMediaRecorder(durationSec, fps, tickStepSec, bgColor, textColor, format)
+          : await generateVideo(durationSec, fps, tickStepSec, bgColor, textColor, format);
+        const ext = format === 'mp4' ? 'mp4' : 'webm';
+        const fileName = `stopwatch_${durationSec.toFixed(2)}s_${fps}fps_step${tickStepSec}s_${engine}.${ext}`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
